@@ -40,6 +40,11 @@ on:
         required: true
         type: boolean
         default: 'true'
+      Trampoline_enable:
+        description: '是否启用 Trampoline 特性？
+        required: true
+        type: boolean
+        default: 'true'
       lz4kd_enable:
         description: '是否安装 LZ4KD 补丁(若已开启lz4+zstd补丁则可不开启)'
         required: true
@@ -399,7 +404,18 @@ jobs:
           cd ./common
           patch -p1 < 001-lz4.patch || true
           patch -p1 < 002-zstd.patch || true
-
+          
+      - name: 启用 Trampoline 特性
+        if: inputs.Trampoline_enable
+        run: |
+          cd kernel_workspace
+          echo "CONFIG_FTRACE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DYNAMIC_FTRACE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DYNAMIC_FTRACE_WITH_REGS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DYNAMIC_FTRACE_WITH_DIRECT_CALLS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_BPF_EVENTS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_FPROBE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          
       - name: 应用 lz4kd 补丁
         if: inputs.lz4kd_enable
         run: |
