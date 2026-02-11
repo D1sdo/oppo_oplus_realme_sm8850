@@ -41,7 +41,7 @@ on:
         type: boolean
         default: 'true'
       Trampoline_enable:
-        description: '是否启用 Trampoline 特性？
+        description: '是否启用 Trampoline 特性'
         required: true
         type: boolean
         default: 'true'
