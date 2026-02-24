@@ -1,0 +1,299 @@
+diff --git a/drivers/cpufreq/Kconfig b/drivers/cpufreq/Kconfig
+index 585973d..1234567 100644
+--- a/drivers/cpufreq/Kconfig
++++ b/drivers/cpufreq/Kconfig
+@@ -100,6 +100,14 @@ config CPUFREQ_GOV_PERFORMANCE
+ 	  If in doubt, say Y.
+ 
++config CPUFREQ_GOV_STR_EXT
++	tristate "'str_ext' cpufreq governor"
++	help
++	  This governor allows external control via eBPF kfuncs.
++	  It is designed to work with sched_ext schedulers.
++
++	  If in doubt, say N.
++
+ config CPUFREQ_GOV_CONSERVATIVE
+ 	tristate "'conservative' cpufreq governor"
+ 	depends on CPU_FREQ
+diff --git a/drivers/cpufreq/Makefile b/drivers/cpufreq/Makefile
+index 585973d..1234567 100644
+--- a/drivers/cpufreq/Makefile
++++ b/drivers/cpufreq/Makefile
+@@ -10,6 +10,7 @@ obj-$(CONFIG_CPUFREQ_GOV_PERFORMANCE)	+= cpufreq_performance.o
+ obj-$(CONFIG_CPUFREQ_GOV_POWERSAVE)	+= cpufreq_powersave.o
+ obj-$(CONFIG_CPUFREQ_GOV_USERSPACE)	+= cpufreq_userspace.o
+ obj-$(CONFIG_CPUFREQ_GOV_ONDEMAND)	+= cpufreq_ondemand.o
++obj-$(CONFIG_CPUFREQ_GOV_STR_EXT)	+= str_ext.o
+ obj-$(CONFIG_CPUFREQ_GOV_CONSERVATIVE)	+= cpufreq_conservative.o
+ obj-$(CONFIG_CPUFREQ_GOV_COMMON)		+= cpufreq_gov_common.o
+ obj-$(CONFIG_CPUFREQ_GOV_ATTR_SET)	+= cpufreq_gov_attr_set.o
+diff --git a/drivers/cpufreq/str_ext.c b/drivers/cpufreq/str_ext.c
+new file mode 100644
+index 0000000..abcdef1
+--- /dev/null
++++ b/drivers/cpufreq/str_ext.c
+@@ -0,0 +1,245 @@
++/*
++ * str_ext CPUFreq Governor
++ * Features:
++ * 1. Per-Policy independent sysfs tuning (max_freq/min_freq).
++ * 2. High-performance lockless eBPF access via per-cpu pointers.
++ */
++
++#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
++
++#include <linux/cpufreq.h>
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <linux/btf.h>
++#include <linux/btf_ids.h>
++#include <linux/kobject.h>
++#include <linux/sysfs.h>
++
++/* 这是一个 Per-Policy 的数据结构。
++ * 每次系统初始化一个频率域（Cluster/Policy），都会申请一个新的实例。
++ * 因此，小核、大核、超大核的配置数据在物理内存上是完全隔离的。
++ */
++struct str_ext_tunables {
++	struct cpufreq_policy *policy;
++	unsigned int soft_min_freq;    /* 该 Policy 独享的软下限 */
++	unsigned int soft_max_freq;    /* 该 Policy 独享的软上限 */
++	struct kobject kobj;           /* 挂载到对应 policyX 目录下的 kobject */
++};
++
++/* 这是一个查找表，用于在 BPF 环境下通过 CPU ID 快速找到
++ * 该 CPU 所属 Policy 对应的 tunables 结构体。
++ */
++static DEFINE_PER_CPU(struct str_ext_tunables *, str_ext_tunables_ptr);
++
++#define to_str_ext_tunables(k) container_of(k, struct str_ext_tunables, kobj)
++
++/* =====================================================================
++ * Sysfs 节点实现
++ * 路径: /sys/devices/system/cpu/cpufreq/policyX/str_ext/{min_freq, max_freq}
++ * ===================================================================== */
++
++static ssize_t min_freq_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
++{
++	struct str_ext_tunables *tunables = to_str_ext_tunables(kobj);
++	return sprintf(buf, "%u\n", tunables->soft_min_freq);
++}
++
++static ssize_t min_freq_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
++{
++	struct str_ext_tunables *tunables = to_str_ext_tunables(kobj);
++	unsigned int val;
++
++	if (kstrtouint(buf, 10, &val))
++		return -EINVAL;
++
++	/* 校验：不能超出该 Policy 硬件允许的范围，也不能高于当前设定的软上限 */
++	if (val < tunables->policy->cpuinfo.min_freq || val > tunables->soft_max_freq)
++		return -EINVAL;
++
++	tunables->soft_min_freq = val;
++	return count;
++}
++
++static ssize_t max_freq_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
++{
++	struct str_ext_tunables *tunables = to_str_ext_tunables(kobj);
++	return sprintf(buf, "%u\n", tunables->soft_max_freq);
++}
++
++static ssize_t max_freq_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
++{
++	struct str_ext_tunables *tunables = to_str_ext_tunables(kobj);
++	unsigned int val;
++
++	if (kstrtouint(buf, 10, &val))
++		return -EINVAL;
++
++	/* 校验：不能超出硬件范围，不能低于软下限 */
++	if (val > tunables->policy->cpuinfo.max_freq || val < tunables->soft_min_freq)
++		return -EINVAL;
++
++	tunables->soft_max_freq = val;
++	return count;
++}
++
++static struct kobj_attribute min_freq_attr = __ATTR_RW(min_freq);
++static struct kobj_attribute max_freq_attr = __ATTR_RW(max_freq);
++
++static struct attribute *str_ext_attrs[] = {
++	&min_freq_attr.attr,
++	&max_freq_attr.attr,
++	NULL
++};
++ATTRIBUTE_GROUPS(str_ext);
++
++static void str_ext_kobj_release(struct kobject *kobj)
++{
++	struct str_ext_tunables *tunables = to_str_ext_tunables(kobj);
++	kfree(tunables);
++}
++
++static const struct sysfs_ops str_ext_sysfs_ops = {
++	.show   = kobj_attr_show,
++	.store  = kobj_attr_store,
++};
++
++static struct kobj_type str_ext_ktype = {
++	.release       = str_ext_kobj_release,
++	.sysfs_ops     = &str_ext_sysfs_ops,
++	.default_groups = str_ext_groups,
++};
++
++/* =====================================================================
++ * BPF Kfunc: 暴露给 BPF 程序的接口
++ * ===================================================================== */
++
++__bpf_kfunc int bpf_str_ext_set_freq(u32 cpu, u32 freq)
++{
++	struct str_ext_tunables *tunables;
++	struct cpufreq_policy *policy;
++
++	if (cpu >= nr_cpu_ids || !cpu_online(cpu))
++		return -EINVAL;
++
++	/* O(1) 复杂度获取当前 CPU 所属 Policy 的独立配置数据。
++	 * 如果 CPU0 和 CPU4 属于不同 Policy，这里获取到的 tunables 指针是不同的。
++	 */
++	tunables = per_cpu(str_ext_tunables_ptr, cpu);
++	if (!tunables)
++		return -EINVAL;
++
++	policy = tunables->policy;
++
++	/* 应用该 Policy 独立的软限制 */
++	if (freq < tunables->soft_min_freq)
++		freq = tunables->soft_min_freq;
++	if (freq > tunables->soft_max_freq)
++		freq = tunables->soft_max_freq;
++
++	/* 应用硬件硬限制 (Double Check) */
++	if (freq < policy->min)
++		freq = policy->min;
++	if (freq > policy->max)
++		freq = policy->max;
++
++	if (policy->fast_switch_enabled) {
++		cpufreq_driver_fast_switch(policy, freq);
++	} else {
++		__cpufreq_driver_target(policy, freq, CPUFREQ_RELATION_L);
++	}
++
++	return 0;
++}
++
++BTF_SET8_START(str_ext_kfunc_ids)
++BTF_ID_FLAGS(func, bpf_str_ext_set_freq)
++BTF_SET8_END(str_ext_kfunc_ids)
++
++static const struct btf_kfunc_id_set str_ext_kfunc_set = {
++	.owner = THIS_MODULE,
++	.set   = &str_ext_kfunc_ids,
++};
++
++/* =====================================================================
++ * Governor Lifecycle
++ * ===================================================================== */
++
++static int str_ext_init(struct cpufreq_policy *policy)
++{
++	struct str_ext_tunables *tunables;
++	int ret, cpu;
++
++	/* 每次 Policy 初始化时，申请一块独立的内存 */
++	tunables = kzalloc(sizeof(*tunables), GFP_KERNEL);
++	if (!tunables)
++		return -ENOMEM;
++
++	tunables->policy = policy;
++	tunables->soft_min_freq = policy->cpuinfo.min_freq;
++	tunables->soft_max_freq = policy->cpuinfo.max_freq;
++
++	/* 将 kobject 挂载到当前的 policyX 目录下，名为 "str_ext" */
++	kobject_init(&tunables->kobj, &str_ext_ktype);
++	ret = kobject_add(&tunables->kobj, &policy->kobj, "str_ext");
++	if (ret) {
++		kobject_put(&tunables->kobj);
++		return ret;
++	}
++
++	policy->governor_data = tunables;
++
++	/* 更新 Per-CPU 指针表。
++	 * 仅将属于当前 Policy 的 CPU 指向这个新的 tunables 实例。
++	 * 这确保了数据的隔离性。
++	 */
++	for_each_cpu(cpu, policy->cpus)
++		per_cpu(str_ext_tunables_ptr, cpu) = tunables;
++
++	return 0;
++}
++
++static void str_ext_exit(struct cpufreq_policy *policy)
++{
++	struct str_ext_tunables *tunables = policy->governor_data;
++	int cpu;
++
++	if (tunables) {
++		/* 清空指针，防止悬挂引用 */
++		for_each_cpu(cpu, policy->cpus)
++			per_cpu(str_ext_tunables_ptr, cpu) = NULL;
++
++		kobject_put(&tunables->kobj);
++		policy->governor_data = NULL;
++	}
++}
++
++static int str_ext_start(struct cpufreq_policy *policy)
++{
++	return 0;
++}
++
++static void str_ext_stop(struct cpufreq_policy *policy)
++{
++}
++
++static void str_ext_limits(struct cpufreq_policy *policy)
++{
++	/* 当外部限制改变时（如过热），强制刷新一次 */
++	if (policy->cur < policy->min || policy->cur > policy->max)
++		__cpufreq_driver_target(policy, policy->cur, CPUFREQ_RELATION_L);
++}
++
++static struct cpufreq_governor cpufreq_gov_str_ext = {
++	.name		= "str_ext",
++	.init		= str_ext_init,
++	.exit		= str_ext_exit,
++	.start		= str_ext_start,
++	.stop		= str_ext_stop,
++	.limits		= str_ext_limits,
++	.owner		= THIS_MODULE,
++	.flags		= CPUFREQ_GOV_STRICT_TARGET,
++};
++
++static int __init str_ext_gov_init(void)
++{
++	int ret;
++	ret = cpufreq_register_governor(&cpufreq_gov_str_ext);
++	if (ret)
++		return ret;
++
++	return register_btf_kfunc_id_set(BPF_PROG_TYPE_STRUCT_OPS, &str_ext_kfunc_set);
++}
++
++static void __exit str_ext_gov_exit(void)
++{
++	cpufreq_unregister_governor(&cpufreq_gov_str_ext);
++}
++
++MODULE_AUTHOR("YourName");
++MODULE_DESCRIPTION("CPUfreq governor for sched_ext control with isolated policy tuning");
++MODULE_LICENSE("GPL");
++
++module_init(str_ext_gov_init);
++module_exit(str_ext_gov_exit);
