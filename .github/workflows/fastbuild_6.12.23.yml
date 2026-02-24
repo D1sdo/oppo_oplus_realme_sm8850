@@ -40,7 +40,7 @@ on:
         required: true
         type: boolean
         default: 'true'
-      inputs.str_ext_enable:
+      str_ext_enable:
         description: '是否安装 str_ext 调频器补丁'
         required: true
         type: boolean
