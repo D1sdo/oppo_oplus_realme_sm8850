@@ -40,6 +40,11 @@ on:
         required: true
         type: boolean
         default: 'true'
+      inputs.str_ext_enable:
+        description: '是否安装 str_ext 调频器补丁'
+        required: true
+        type: boolean
+        default: 'true'
       lz4kd_enable:
         description: '是否安装 LZ4KD 补丁(若已开启lz4+zstd补丁则可不开启)'
         required: true
@@ -331,6 +336,17 @@ jobs:
             cd ./KernelSU
             patch -p1 < 10_enable_susfs_for_ksu.patch || true
           fi
+
+      - name: 应用 str_ext 补丁并修改 defconfig
+        if: inputs.str_ext_enable
+        run: |
+          echo "正在添加 str_ext 补丁…"
+          cd kernel_workspace/common
+          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/str_ext.patch
+          patch -p1 -F 3 < str_ext.patch || true
+          
+          echo "正在修改 gki_defconfig 以启用 str_ext 调频器…"
+          echo "CONFIG_CPUFREQ_GOV_STR_EXT=y" >> arch/arm64/configs/gki_defconfig
           
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
         if: inputs.lz4_enable
