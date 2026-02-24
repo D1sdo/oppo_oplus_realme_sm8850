@@ -1,10 +1,9 @@
 diff --git a/drivers/cpufreq/Kconfig b/drivers/cpufreq/Kconfig
-index 585973d..1234567 100644
 --- a/drivers/cpufreq/Kconfig
 +++ b/drivers/cpufreq/Kconfig
-@@ -100,6 +100,14 @@ config CPUFREQ_GOV_PERFORMANCE
+@@ -100,5 +100,13 @@
  	  If in doubt, say Y.
- 
+  
 +config CPUFREQ_GOV_STR_EXT
 +	tristate "'str_ext' cpufreq governor"
 +	help
@@ -17,20 +16,16 @@ index 585973d..1234567 100644
  	tristate "'conservative' cpufreq governor"
  	depends on CPU_FREQ
 diff --git a/drivers/cpufreq/Makefile b/drivers/cpufreq/Makefile
-index 585973d..1234567 100644
 --- a/drivers/cpufreq/Makefile
 +++ b/drivers/cpufreq/Makefile
-@@ -10,6 +10,7 @@ obj-$(CONFIG_CPUFREQ_GOV_PERFORMANCE)	+= cpufreq_performance.o
+@@ -10,4 +10,5 @@
  obj-$(CONFIG_CPUFREQ_GOV_POWERSAVE)	+= cpufreq_powersave.o
  obj-$(CONFIG_CPUFREQ_GOV_USERSPACE)	+= cpufreq_userspace.o
  obj-$(CONFIG_CPUFREQ_GOV_ONDEMAND)	+= cpufreq_ondemand.o
 +obj-$(CONFIG_CPUFREQ_GOV_STR_EXT)	+= str_ext.o
  obj-$(CONFIG_CPUFREQ_GOV_CONSERVATIVE)	+= cpufreq_conservative.o
- obj-$(CONFIG_CPUFREQ_GOV_COMMON)		+= cpufreq_gov_common.o
- obj-$(CONFIG_CPUFREQ_GOV_ATTR_SET)	+= cpufreq_gov_attr_set.o
 diff --git a/drivers/cpufreq/str_ext.c b/drivers/cpufreq/str_ext.c
 new file mode 100644
-index 0000000..abcdef1
 --- /dev/null
 +++ b/drivers/cpufreq/str_ext.c
 @@ -0,0 +1,245 @@
