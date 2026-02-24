@@ -1,7 +1,7 @@
 diff --git a/drivers/cpufreq/Kconfig b/drivers/cpufreq/Kconfig
 --- a/drivers/cpufreq/Kconfig
 +++ b/drivers/cpufreq/Kconfig
-@@ -150,6 +150,14 @@ config CPUFREQ_GOV_CONSERVATIVE
+@@ -150,5 +150,13 @@ config CPUFREQ_GOV_CONSERVATIVE
  	tristate "'conservative' cpufreq governor"
  	depends on CPU_FREQ
  	help
@@ -18,7 +18,7 @@ diff --git a/drivers/cpufreq/Kconfig b/drivers/cpufreq/Kconfig
 diff --git a/drivers/cpufreq/Makefile b/drivers/cpufreq/Makefile
 --- a/drivers/cpufreq/Makefile
 +++ b/drivers/cpufreq/Makefile
-@@ -10,3 +10,4 @@ obj-$(CONFIG_CPUFREQ_GOV_ONDEMAND)	+= cpufreq_ondemand.o
+@@ -10,4 +10,5 @@ obj-$(CONFIG_CPUFREQ_GOV_ONDEMAND)	+= cpufreq_ondemand.o
  obj-$(CONFIG_CPUFREQ_GOV_CONSERVATIVE)	+= cpufreq_conservative.o
 +obj-$(CONFIG_CPUFREQ_GOV_STR_EXT)	+= str_ext.o
  obj-$(CONFIG_CPUFREQ_GOV_COMMON)		+= cpufreq_gov_common.o
