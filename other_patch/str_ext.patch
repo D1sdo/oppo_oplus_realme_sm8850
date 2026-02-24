@@ -1,29 +1,28 @@
 diff --git a/drivers/cpufreq/Kconfig b/drivers/cpufreq/Kconfig
 --- a/drivers/cpufreq/Kconfig
 +++ b/drivers/cpufreq/Kconfig
-@@ -100,5 +100,13 @@
- 	  If in doubt, say Y.
-  
+@@ -150,6 +150,14 @@ config CPUFREQ_GOV_CONSERVATIVE
+ 	tristate "'conservative' cpufreq governor"
+ 	depends on CPU_FREQ
+ 	help
++
 +config CPUFREQ_GOV_STR_EXT
-+	tristate "'str_ext' cpufreq governor"
++	bool "'str_ext' cpufreq governor"
 +	help
 +	  This governor allows external control via eBPF kfuncs.
 +	  It is designed to work with sched_ext schedulers.
 +
 +	  If in doubt, say N.
-+
- config CPUFREQ_GOV_CONSERVATIVE
- 	tristate "'conservative' cpufreq governor"
- 	depends on CPU_FREQ
+ 	  The CPUfreq governor "conservative", much like the "ondemand"
+ 	  governor, sets the CPU depending on the current usage.  It
 diff --git a/drivers/cpufreq/Makefile b/drivers/cpufreq/Makefile
 --- a/drivers/cpufreq/Makefile
 +++ b/drivers/cpufreq/Makefile
-@@ -10,4 +10,5 @@
- obj-$(CONFIG_CPUFREQ_GOV_POWERSAVE)	+= cpufreq_powersave.o
- obj-$(CONFIG_CPUFREQ_GOV_USERSPACE)	+= cpufreq_userspace.o
- obj-$(CONFIG_CPUFREQ_GOV_ONDEMAND)	+= cpufreq_ondemand.o
-+obj-$(CONFIG_CPUFREQ_GOV_STR_EXT)	+= str_ext.o
+@@ -10,3 +10,4 @@ obj-$(CONFIG_CPUFREQ_GOV_ONDEMAND)	+= cpufreq_ondemand.o
  obj-$(CONFIG_CPUFREQ_GOV_CONSERVATIVE)	+= cpufreq_conservative.o
++obj-$(CONFIG_CPUFREQ_GOV_STR_EXT)	+= str_ext.o
+ obj-$(CONFIG_CPUFREQ_GOV_COMMON)		+= cpufreq_gov_common.o
+ obj-$(CONFIG_CPUFREQ_GOV_ATTR_SET)	+= cpufreq_gov_attr_set.o
 diff --git a/drivers/cpufreq/str_ext.c b/drivers/cpufreq/str_ext.c
 new file mode 100644
 --- /dev/null
