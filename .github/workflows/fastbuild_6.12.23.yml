@@ -337,15 +337,26 @@ jobs:
             patch -p1 < 10_enable_susfs_for_ksu.patch || true
           fi
 
-      - name: 应用 str_ext 补丁并修改 defconfig
+      - name: 应用 str_ext 补丁并注入配置
         if: inputs.str_ext_enable
         run: |
-          echo "正在添加 str_ext 补丁…"
+          echo "正在清理工作区以防止冲突..."
           cd kernel_workspace/common
+          git checkout . && git clean -fd
+
+          echo "正在下载并应用 C 源码补丁..."
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/str_ext.patch
-          patch -p1 -F 3 < str_ext.patch || true
+          patch -p1 < str_ext.patch || exit 1
+
+          echo "正在强制注入 Kconfig 和 Makefile 配置..."
+          # 1. 向 Kconfig 插入配置 (安全插入到文件末尾或特定位置)
+          # 这里我们匹配 'config CPUFREQ_GOV_CONSERVATIVE' 并在其后追加配置，避开上下文检查
+          sed -i '/config CPUFREQ_GOV_CONSERVATIVE/a \\nconfig CPUFREQ_GOV_STR_EXT\n\tbool "str_ext cpufreq governor"\n\thelp\n\t  This governor allows external control via eBPF kfuncs.\n\t  It is designed to work with sched_ext schedulers.\n\n\t  If in doubt, say N.' drivers/cpufreq/Kconfig
           
-          echo "正在修改 gki_defconfig 以启用 str_ext 调频器…"
+          # 2. 向 Makefile 追加编译规则
+          echo "obj-\$(CONFIG_CPUFREQ_GOV_STR_EXT) += str_ext.o" >> drivers/cpufreq/Makefile
+
+          echo "正在启用 gki_defconfig..."
           echo "CONFIG_CPUFREQ_GOV_STR_EXT=y" >> arch/arm64/configs/gki_defconfig
           
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
