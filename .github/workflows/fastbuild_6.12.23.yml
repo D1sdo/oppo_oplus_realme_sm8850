@@ -337,27 +337,34 @@ jobs:
             patch -p1 < 10_enable_susfs_for_ksu.patch || true
           fi
 
-      - name: 应用 str_ext 补丁并注入配置
+      - name: 应用 str_ext 补丁并强力注入配置
         if: inputs.str_ext_enable
         run: |
-          echo "正在清理工作区以防止冲突..."
+          echo "1. 恢复工作区状态，防止多次重试导致的残留..."
           cd kernel_workspace/common
-          git checkout . && git clean -fd
+          git checkout drivers/cpufreq/Kconfig drivers/cpufreq/Makefile arch/arm64/configs/ || true
 
-          echo "正在下载并应用 C 源码补丁..."
-          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/str_ext.patch
+          echo "2. 下载并应用纯净的 C 源码补丁..."
+          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/str_ext.patch -O str_ext.patch
           patch -p1 < str_ext.patch || exit 1
 
-          echo "正在强制注入 Kconfig 和 Makefile 配置..."
-          # 1. 向 Kconfig 插入配置 (安全插入到文件末尾或特定位置)
-          # 这里我们匹配 'config CPUFREQ_GOV_CONSERVATIVE' 并在其后追加配置，避开上下文检查
-          sed -i '/config CPUFREQ_GOV_CONSERVATIVE/a \\nconfig CPUFREQ_GOV_STR_EXT\n\tbool "str_ext cpufreq governor"\n\thelp\n\t  This governor allows external control via eBPF kfuncs.\n\t  It is designed to work with sched_ext schedulers.\n\n\t  If in doubt, say N.' drivers/cpufreq/Kconfig
-          
-          # 2. 向 Makefile 追加编译规则
+          echo "3. 完美注入 Kconfig (使用 awk 寻找文件末尾的 endif 并在其前方插入)..."
+          awk '/^endif/{if (!done) {print "config CPUFREQ_GOV_STR_EXT\n\tbool \"str_ext cpufreq governor\"\n"; done=1}}1' drivers/cpufreq/Kconfig > tmp_kconfig
+          mv tmp_kconfig drivers/cpufreq/Kconfig
+
+          echo "4. 注入 Makefile..."
           echo "obj-\$(CONFIG_CPUFREQ_GOV_STR_EXT) += str_ext.o" >> drivers/cpufreq/Makefile
 
-          echo "正在启用 gki_defconfig..."
-          echo "CONFIG_CPUFREQ_GOV_STR_EXT=y" >> arch/arm64/configs/gki_defconfig
+          echo "5. 地毯式注入 Defconfig (防 Oplus 覆盖)..."
+          # 遍历所有的 defconfig 文件，强制追加我们的配置项
+          find arch/arm64/configs -type f -name "*defconfig*" -exec sh -c 'grep -q "CONFIG_CPUFREQ_GOV_STR_EXT" "{}" || echo "CONFIG_CPUFREQ_GOV_STR_EXT=y" >> "{}"' \;
+          
+          # 针对 GKI / Kleaf 构建系统的特殊碎片文件进行兜底
+          find . -type f -name "build.config.*" -exec sh -c 'grep -q "CONFIG_CPUFREQ_GOV_STR_EXT" "{}" || echo "CONFIG_CPUFREQ_GOV_STR_EXT=y" >> "{}"' \;
+
+          echo "注入完成！检查注入结果："
+          tail -n 3 drivers/cpufreq/Kconfig
+          tail -n 1 drivers/cpufreq/Makefile
           
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
         if: inputs.lz4_enable
